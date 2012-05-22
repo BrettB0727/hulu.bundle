@@ -203,7 +203,10 @@ def ListShows(title, channel, item_type, display):
         continue
 
       info_url = original_url.replace('http://www.hulu.com/', 'http://www.hulu.com/shows/info/')
-      details = JSON.ObjectFromURL(info_url, headers = {'X-Requested-With': 'XMLHttpRequest'})
+      try:
+        details = JSON.ObjectFromURL(info_url, headers = {'X-Requested-With': 'XMLHttpRequest'})
+      except:
+        continue
 
       tags = []
       if 'taggings' in details:
