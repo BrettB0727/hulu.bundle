@@ -1,4 +1,4 @@
-import re, random
+import random
 
 PREFIX          = "/video/hulu" 
 
@@ -13,7 +13,7 @@ EPISODE_LISTINGS  = 'http://www.hulu.com/videos/slider?classic_sort=asc&items_pe
 URL_QUEUE         = 'http://www.hulu.com/profile/queue?view=list'
 
 REGEX_CHANNEL_LISTINGS      = Regex('Element.replace\("channel", "(.+)\);')
-REGEX_SHOW_LISTINGS         = Regex('Element.update\("show_list", "(.+)\);')
+REGEX_SHOW_LISTINGS         = Regex('Element.(update|replace)\("(show_list|browse-lazy-load)", "(?P<content>.+)\);')
 REGEX_RECOMMENDED_LISTINGS  = Regex('Element.update\("rec-hub-main", "(.+)\);')
 REGEX_RATING_FEED           = Regex('Rating: ([^ ]+) .+')
 REGEX_TV_EPISODE_FEED       = Regex('(?P<show>[^-]+) - s(?P<season>[0-9]+) \| e(?P<episode>[0-9]+) - (?P<title>.+)$')
@@ -23,8 +23,6 @@ REGEX_TV_EPISODE_QUEUE      = Regex('S(?P<season>[0-9]+) : Ep\. (?P<episode>[0-9
 
 NAMESPACES      = {'activity': 'http://activitystrea.ms/spec/1.0/',
                    'media': 'http://search.yahoo.com/mrss/'}
-
-CACHE_INTERVAL  = 3600
 
 ####################################################################################################
 def Start():
@@ -38,15 +36,16 @@ def Start():
 
   DirectoryObject.thumb = R(ICON_DEFAULT)
   DirectoryObject.art = R(ART)
-  
+
   VideoClipObject.thumb = R(ICON_DEFAULT)
   VideoClipObject.art = R(ART)
 
-  HTTP.CacheTime = CACHE_INTERVAL
+  HTTP.CacheTime = CACHE_1HOUR
+  HTTP.Headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.7; rv:12.0) Gecko/20100101 Firefox/12.0'
 
   loginResult = HuluLogin()
   Log("Login success: " + str(loginResult))
-        
+
 ####################################################################################################  
 def HuluLogin():
 
@@ -187,42 +186,52 @@ def ListShows(title, channel, item_type, display):
   oc = ObjectContainer()
 
   channel = channel.replace(' ','%20')
-  shows_page = HTTP.Request(URL_LISTINGS % (channel, display, item_type, 0)).content
-  html_content = REGEX_SHOW_LISTINGS.findall(shows_page)[0].decode('unicode_escape')
-  html_page = HTML.ElementFromString(html_content)
+  page = 0
+  more = True
 
-  for item in html_page.xpath('//a[@class = "info_hover"]'):
-    original_url = item.get('href').split('?')[0]
-    if original_url.startswith('http://www.hulu.com/') == False:
-      continue
+  while more is True:
+    more = False
 
-    info_url = original_url.replace('http://www.hulu.com/', 'http://www.hulu.com/shows/info/')
-    details = JSON.ObjectFromURL(info_url, headers = {'X-Requested-With': 'XMLHttpRequest'})
+    shows_page = HTTP.Request(URL_LISTINGS % (channel, display, item_type, page)).content
+    html_content = REGEX_SHOW_LISTINGS.search(shows_page).group('content').decode('unicode_escape')
+    html_page = HTML.ElementFromString(html_content)
 
-    tags = []
-    if 'taggings' in details:
-      tags = [ tag['tag_name'] for tag in details['taggings'] ]
+    for item in html_page.xpath('//a[@class = "info_hover"]'):
 
-    if details.has_key('films_count'):
-      oc.add(MovieObject(
-        url = original_url,
-        title = details['name'],
-        summary = details['description'],
-        thumb = details['thumbnail_url'],
-        tags = tags,
-        originally_available_at = Datetime.ParseDate(details['film_date'])))
+      original_url = item.get('href').split('?')[0]
+      if original_url.startswith('http://www.hulu.com/') == False:
+        continue
 
-    elif details.has_key('episodes_count') and details['episodes_count'] > 0:
+      info_url = original_url.replace('http://www.hulu.com/', 'http://www.hulu.com/shows/info/')
+      details = JSON.ObjectFromURL(info_url, headers = {'X-Requested-With': 'XMLHttpRequest'})
 
-      oc.add(TVShowObject(
-        key = Callback(ListSeasons, title = details['name'], show_url = original_url, info_url = info_url, show_id = details['id']),
-        rating_key = original_url,
-        title = details['name'],
-        summary = details['description'],
-        thumb = details['thumbnail_url'],
-        episode_count = details['episodes_count'],
-        viewed_episode_count = 0,
-        tags = tags))
+      tags = []
+      if 'taggings' in details:
+        tags = [ tag['tag_name'] for tag in details['taggings'] ]
+
+      if details.has_key('films_count'):
+        oc.add(MovieObject(
+          url = original_url,
+          title = details['name'],
+          summary = details['description'],
+          thumb = details['thumbnail_url'],
+          tags = tags,
+          originally_available_at = Datetime.ParseDate(details['film_date'])))
+
+      elif details.has_key('episodes_count') and details['episodes_count'] > 0:
+        oc.add(TVShowObject(
+          key = Callback(ListSeasons, title = details['name'], show_url = original_url, info_url = info_url, show_id = details['id']),
+          rating_key = original_url,
+          title = details['name'],
+          summary = details['description'],
+          thumb = details['thumbnail_url'],
+          episode_count = details['episodes_count'],
+          viewed_episode_count = 0,
+          tags = tags))
+
+      more = True
+
+    page = page+1
 
   return oc
 
